@@ -1,0 +1,124 @@
+.include "M328PDEF.inc" ; Incluye el archivo de definiciones del microcontrolador ATmega328P
+
+.cseg ; Segmento de código
+
+.def contador_1s = R20 ; Definición de la variable contador_1s en el registro R20
+.def contador_display_1 = R22 ; Definición de la variable contador_display_1 en el registro R22
+.def contador_display_2 = R23 ; Definición de la variable contador_display_2 en el registro R23
+
+.org 0x00 ; Ubicación del vector de reset
+	jmp SETUP ; Salta a la sección de configuración al iniciar el programa
+
+.org 0x0020 ; Ubicación del vector de interrupción
+	jmp ISR_TIMER0_OVF ; Salta a la rutina de servicio de interrupción del Timer0
+
+TABLA: .DB 0x3F, 0x06, 0x5B, 0x4F, 0X66, 0X6D, 0X7D, 0X07, 0X7F, 0X6F ; Tabla de valores para los dígitos en los displays de 7 segmentos
+
+SETUP:
+	LDI R16, LOW(RAMEND) ; Carga en R16 la dirección de memoria baja del puntero de pila
+	OUT SPL, R16 ; Establece el puntero de pila (Stack Pointer) en la dirección baja de la memoria RAM
+	LDI R17, HIGH(RAMEND) ; Carga en R17 la dirección de memoria alta del puntero de pila
+	OUT SPH, R17 ; Establece el puntero de pila en la dirección alta de la memoria RAM
+
+	LDI R16, 0b0011_1000 ; Configura el puerto B como salida
+	OUT DDRB, R16
+	ldi R16, 0b1111_1111 ; Configura el puerto C como salida
+	out DDRC, R16
+	ldi R16, 0b1000_0011 ; Configura el puerto D como salida
+	out DDRD, R16
+	cbi PORTB, PB3 ; Limpia el bit 3 del puerto B
+	cbi PORTB, PB4 ; Limpia el bit 4 del puerto B
+
+	ldi R18, 0 ; Inicializa R18 en 0
+	ldi R21, 0 ; Inicializa R21 en 0
+	ldi contador_display_1, 0 ; Inicializa contador_display_1 en 0
+	ldi contador_display_2, 0 ; Inicializa contador_display_2 en 0
+	ldi R19, 9 ; Establece el límite de segundos en 9
+	ldi R24, 8 ; Establece el límite de minutos en 8
+	ldi ZH, HIGH(TABLA << 1) ; Carga la parte alta de la dirección de la tabla en ZH
+	ldi ZL, LOW(TABLA << 1) ; Carga la parte baja de la dirección de la tabla en ZL
+	add ZL, R18 ; Suma R18 a ZL
+	lpm R18, Z ; Lee el valor de la tabla y lo almacena en R18
+
+	call Init_T0 ; Llama a la función de inicialización del Timer0
+	sei ; Habilita las interrupciones globales
+	ldi contador_1s, 0 ; Inicializa el contador de segundos en 0
+
+LOOP:
+	call DISPLAY_SEGUNDOS ; Llama a la función para mostrar los segundos
+	call DISPLAY_DECENAS ; Llama a la función para mostrar las decenas de segundos
+	cpi contador_1s, 100 ; Compara el contador de segundos con 100
+	brne LOOP ; Salta al bucle si no son iguales
+	clr contador_1s ; Limpia el contador de segundos
+	sbi PINB, PB5 ; Establece en alto el bit 5 del puerto B (encender un LED indicador)
+	cpse contador_display_1, R19 ; Compara el contador de display 1 con el límite de segundos
+	call INCREMENTAR_1 ; Llama a la función de incremento de los segundos
+	ldi contador_display_1, 0 ; Reinicia el contador de display 1
+	cpse contador_display_2, R24 ; Compara el contador de display 2 con el límite de minutos
+	call INCREMENTAR_2 ; Llama a la función de incremento de las decenas de segundos
+	ldi contador_display_2, 0 ; Reinicia el contador de display 2
+	rjmp LOOP ; Salta al inicio del bucle
+
+Init_T0:
+	ldi R16, (1 << CS02)|(1 << CS00) ; Configura el prescaler del Timer0 a 1024
+	out TCCR0B, R16
+	ldi R16, 99 ; Establece el valor de desbordamiento del contador en 99
+	out TCNT0, R16 ; Carga el valor inicial del contador del Timer0
+	ldi R16, (1 << TOIE0) ; Habilita la interrupción de desbordamiento del Timer0
+	sts TIMSK0, R16 ; Almacena el valor en el registro de habilitación de interrupciones
+	ret ; Retorna de la función
+
+ISR_TIMER0_OVF:
+	push R16 ; Guarda R16 en la pila
+	in R16, sreg ; Carga el estado del registro de estado de la CPU (SREG) en R16
+	push R16 ; Guarda R16 en la pila
+	ldi R16, 99 ; Carga el valor de desbordamiento del contador en R16
+	out TCNT0, R16 ; Carga el valor inicial del contador del Timer0
+	sbi TIFR0, TOV0 ; Borra la bandera de desbordamiento del Timer0
+	inc contador_1s ; Incrementa el contador de segundos
+	pop R16 ; Recupera R16 desde la pila
+	out sreg, R16 ; Restaura el estado del registro de estado de la CPU
+	pop R16 ; Recupera R16 desde la pila
+	reti ; Retorna de la rutina de interrupción
+
+INCREMENTAR_1:
+	inc contador_display_1 ; Incrementa el contador de display 1
+	rjmp LOOP ; Salta al inicio del bucle
+
+INCREMENTAR_2:
+	inc contador_display_2 ; Incrementa el contador de display 2
+	rjmp LOOP ; Salta al inicio del bucle
+
+DISPLAY_SEGUNDOS:
+	cbi PORTB, PB3 ; Limpia el bit 3 del puerto B
+	mov R18, contador_display_1 ; Mueve el valor del contador de display 1 a R18
+	ldi ZH, HIGH(TABLA << 1) ; Carga la parte alta de la dirección de la tabla en ZH
+	ldi ZL, LOW(TABLA << 1) ; Carga la parte baja de la dirección de la tabla en ZL
+	add ZL, R18 ; Suma R18 a ZL
+	lpm R18, Z ; Lee el valor de la tabla y lo almacena en R18
+	cbi PORTB, PB3 ; Limpia el bit 3 del puerto B
+	sbrc R18, PC6 ; Verifica si el bit 6 del registro R18 está establecido
+	sbi PORTD, PD7 ; Establece en alto el bit 7 del puerto D
+	sbrs R18, PC6 ; Verifica si el bit 6 del registro R18 está despejado
+	cbi PORTD, PD7 ; Limpia el bit 7 del puerto D
+	out PORTC, R18 ; Muestra el valor en el display
+	cbi PORTB, PB3 ; Limpia el bit 3 del puerto B
+	sbi PORTB, PB4 ; Establece en alto el bit 4 del puerto B
+	ret ; Retorna de la función
+
+DISPLAY_DECENAS:
+	cbi PORTB, PB4 ; Limpia el bit 4 del puerto B
+	mov R21, contador_display_2 ; Mueve el valor del contador de display 2 a R21
+	ldi ZH, HIGH(TABLA << 1) ; Carga la parte alta de la dirección de la tabla en ZH
+	ldi ZL, LOW(TABLA << 1) ; Carga la parte baja de la dirección de la tabla en ZL
+	add ZL, R21 ; Suma R21 a ZL
+	lpm R21, Z ; Lee el valor de la tabla y lo almacena en R21
+	cbi PORTB, PB4 ; Limpia el bit 4 del puerto B
+	sbrc R21, PC6 ; Verifica si el bit 6 del registro R21 está establecido
+	sbi PORTD, PD7 ; Establece en alto el bit 7 del puerto D
+	sbrs R21, PC6 ; Verifica si el bit 6 del registro R21 está despejado
+	cbi PORTD, PD7 ; Limpia el bit 7 del puerto D
+	out PORTC, R21 ; Muestra el valor en el display
+	cbi PORTB, PB4 ; Limpia el bit 4 del puerto B
+	sbi PORTB, PB3 ; Establece en alto el bit 3 del puerto B
+	ret ; Retorna de la función
